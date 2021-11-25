@@ -17,7 +17,6 @@ The steps that were taken in this analysis involved:
 3. Regression Analysis
 - Once we have a usable dataset containing our variables of interest, we will perform a number of regression analyses to explore the relationships between the time spent doing different types of non-work activities and weekly earnings for our survey respondents. For example, reprising the “watching TV” example from before, a regression line may look like the one below:
 weeklyearningsi = β0 + β1(watchingTVi) + βk(controlvariablesi) + εi
-
-There are a number of variables that will need to be included in our controls including marital status, work-class (public sector, private sector, or self-employed), race, and education level in order to ensure that our regressions are valid.
+- There are a number of variables that will need to be included in our controls including marital status, work-class (public sector, private sector, or self-employed), race, and education level in order to ensure that our regressions are valid.
 
 
