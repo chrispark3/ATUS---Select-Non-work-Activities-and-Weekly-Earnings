@@ -1,0 +1,511 @@
+---
+title: Analysis of the Relationship Between Select Non-work Activities
+  and Weekly Earnings Using ATUS Dataset
+author: ""
+date: "11/17/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,message=FALSE,warning=FALSE}
+library(atus)
+library(tidyverse)
+```
+
+## Exploring the American Time Use Survey (ATUS) Data: Prediction of Income Based on How You Spend Your Non-work Time
+
+We want to use the ATUS data to explore how non-work related activity can predict weekly earnings.
+
+The ATUS contains granular information about how Americans spend their leisure and otherwise non-work time across a number of dimensions. This includes everything from sleeping to socializing to reading for personal interest. 
+
+For our purposes, we define non-work activities as those classified as "Socializing, Relaxing, and Leisure" or as "Sleeping" as reported in the ATUS dataset. This explicitly excludes things like exercise, household chores, and religious activities. 
+
+We believe that there may be a connection between how someone spends this non-work time and their level of income. For example, perhaps if an individual spends a disproportionate amount of time watching TV during their non-work hours, they make less weekly earnings because they're not building skills or maintaining their health. 
+
+We plan to use selections of the ATUS data to perform regression analyses between different categories of time spent and family income. 
+
+This will involve three broad steps:
+
+**1. Data Wrangling:** 
+
+To do this analysis, we will first have to construct a new data table that contains observations of a specific survey respondent ID, their weekly earnings, and all of the activity codes related to our definition of non-work activity. This will require use of the dplyr package to merge and filter the "atusact" and "atusresp" datasets.
+
+In this step, we will also simplify our data to only include those who are in the workforce (not a student or unemployed), are full-time workers, and only have one job. 
+
+**2. Exploratory Data Analysis:** 
+
+In this step, we will take our usable dataset and use ggplot2 to create "quick-and-dirty" visualizations to explore which variables may be the most pertinent to our analysis, how these variables are distributed and if we need to make adjustments, and other possible learnings. 
+
+**3. Regression Analysis:** 
+
+Once we have a usable dataset containing our variables of interest, we will perform a number of regression analyses to explore the relationships between the time spent doing different types of non-work activities and weekly earnings for our survey respondents. For example, reprising the "watching TV" example from before, a regression line may look like the one below:
+$$weeklyearnings_i = \beta_0 + \beta_1(watching TV_i) + \beta_k(control variables_i) + \epsilon_i$$
+There are a number of variables that will need to be included in our controls including marital status, work-class (public sector, private sector, or self-employed), race, and education level in order to ensure that our regressions are valid. 
+
+\newpage
+
+## Data Wrangling
+
+**Introducing the Datasets**
+
+The American Time Use Survey (ATUS) package provides three datasets for analysis: 
+
+* **ATUSACT**: Tabulates the duration spent on different activities by respondent ID
+* **ATUSCPS**: Provides demographic information like marital status, ethnicity, sex, state of origin, and level of education about each respondent by respondent ID
+* **ATUSRESP**: Provides primarily economic information for each respondent like earnings, type of work, industry of work, hours worked per week, and labor status by respondent ID
+
+Using these datasets, we plan to study the relationship between time spent on select non-work activities on weekly earnings, controlling for important variables contained in each dataset. 
+
+**Selecting and Filtering for Variables of Interest** 
+
+First, we made made specific selections of data for control variables of interest within the ATUSCPS dataset.
+
+```{r}
+atuscps_filtered = atuscps %>%
+  group_by(tucaseid) %>%
+  select("tucaseid", "state", "sex", "age", 
+         "edu", "race", "hispanic", "country_born", 
+         "citizen", "marital")
+```
+
+Our next step involved making decisions to simplify our analysis. Within the ATUSRESP dataset, we filtered only for respondent IDs with the following constraints:
+
+* Recorded in 2016
+* Full-time workers with only one job
+* Are not reported as students
+* Are employed at the time of reporting
+* Who reported a weekly earnings figure
+
+```{r}
+atusresp_filtered = atusresp %>%
+  group_by(tucaseid) %>%
+  filter(tuyear == "2016") %>%
+  filter(ptft == "FT") %>%
+  filter(mult_jobs == "no") %>%
+  filter(student_status != "yes") %>%
+  filter(labor_status == "employed-at work" || 
+           labor_status == "employed-absent") %>%
+  filter(weekly_earn != "NA")
+```
+
+Addressing the ATUSACT dataset, which records time spent on different activities, was a bit more complicated. We had to take steps to transform the dataset so that it reported the duration spent on each activity for each respondent ID within a single row. This was necessary to prepare the data for a final merge with the other two datasets.
+
+The following code performs this transformation.
+
+```{r}
+atusact_fixed <- aggregate(dur ~ tucaseid + tiercode , data = atusact , sum )
+atusact_fixed2 = reshape(atusact_fixed, idvar = "tucaseid", timevar = "tiercode", direction = "wide")
+atusact_fixed2[is.na(atusact_fixed2)] = 0
+```
+
+**Merging the Three Datasets into a Usable Form**
+
+Next, we merged the cleaned datasets to create a usable dataset that recorded the weekly earnings, duration spent on activities of interest, and our control variables of interest for each appropriate respondent ID.
+
+```{r}
+atus.almost = atusresp_filtered %>%
+  left_join(atuscps_filtered, by = c("tucaseid"))
+
+atus.all = atus.almost %>%
+  left_join(atusact_fixed2, by = c("tucaseid"))
+```
+
+The following code does a few things. It filters out outlier weekly earning observations identified in our exploratory data analysis (explained in the next section of our report) and converts the duration spent on our activities of interest from minutes into hours which is a more easily interpretable metric for our final regression.
+
+```{r}
+# Converting variables from minutes to hours
+atus.all = atus.all %>%
+  mutate(
+    sleep_hr = dur.10101 / 60,
+    tobaccodrug_hr = dur.120302 / 60,
+    tvmovies_hr = dur.120303 / 60,
+    readingpersonal_hr = dur.120312 / 60,
+    music_nonradio_hr = dur.120306 / 60,
+    socializing_others_hr = dur.120101 / 60,
+    gambling_hr = dur.120404 / 60
+  )
+
+# Filter out weekly earnings greater than 2884.61 in absolute terms
+atus.all.final = atus.all %>%
+  filter(weekly_earn < 2884.61)
+```
+
+\newpage
+
+## Exploratory data analysis to look for trends in our data prior to modeling
+
+Before we can begin the process of conducting our regression analysis we need to gain an understanding of our variables. The goal for our exploratory analysis is to explore the relationships our control and predictor variables have with our variable of interest, weekly earnings, and with each other. We will be able to determine of data transformations are necessary, if variables should be dropped for any reason, if there are multicolinearity issues, and if we want to include interaction or quadratic terms in our final model. This analysis informed further steps in our data wrangling procedure, presented briefly prior to the construction of our regression models.
+
+**Weekly Earnings**
+
+Lets begin by looking at the distribution of our dependent variable weekly earnings. 
+
+```{r}
+weekly_earnings_explore = ggplot(atus.all, aes(x=weekly_earn)) +
+  geom_histogram(binwidth = 10)
+weekly_earnings_explore
+```
+
+The distribution of weekly earnings is right skewed, this does not come as a surprise given distributions of income and wages are notoriously right skewed because they cannot take negative values and the long tail of high earners. A log transformation is most likely going to be necessary to make the data conducive to prediction. THere is also a very large amount of samples at the very high-end of the distribution. We do not have an explanation for this irregularity and we decided to remove these observations from our dataset. 
+
+Below is a density plot of weekly earnings after a log transformation and strange observations removed.
+
+```{r}
+atus.all.final %>% 
+  mutate(log_weekly_earn = log(weekly_earn)) %>%
+  ggplot(aes(x=log_weekly_earn)) +
+  geom_histogram(binwidth=0.1, fill ="white",color="black")
+```
+
+As expected, the transformed data resembles a normal distribution much more closely.
+
+\newpage
+
+## Analysis of Explantaory Variables
+
+**Work Hours Per Week**
+
+Our primary control variable is work hours per week. A histogram appears below:
+```{r}
+atus.all.final %>%
+  ggplot(aes(x=work_hrs_week)) +
+  geom_histogram(binwidth=1)
+```
+It is not a surprise that the majority of respondents work exactly 40 hours a week. Their does not appear to be any issues with the distribution. We will continue using work hours per week as a control. 
+
+There a positive relationship between work hours and weekly earnings as we initially suspected. Below is a scatterplot fitted with a linear regression line. The upward slope of the line confirms our hypothesis.  
+
+```{r}
+earning_vs_hours = ggplot(atus.all.final, aes(x=work_hrs_week, y=weekly_earn)) +
+  geom_point() +
+  geom_smooth(method="lm", se=F, color="red")
+earning_vs_hours
+```
+*Note: The graph of the same relationship using the log transformation of weekly airings shows more normally distributed residuals. We will be using the log transformation in our final model.
+
+**Sleep duration**
+
+We intend to include sleep duration as a predictor variable. 
+
+```{r, include=FALSE}
+as.factor(atus.all$sex)
+```
+
+```{r}
+atus.all.final %>% # Log transformation for weekly earnings
+  mutate(log_weekly_earn = log(weekly_earn)) %>%
+  ggplot(aes(x=sleep_hr, y=log_weekly_earn)) +
+  geom_point(aes(color=sex)) +
+  geom_smooth(se=F, color="red", size=1)
+```
+
+We see that there is a positive relationship between earnings and hours of sleep per night up until about 8 hours then the relationship becomes negative. This is an interesting finding: those who sleep an excessive amount may be "lazy" and therefore lower earners, while those who sleep too little may be neglecting their health leading to reduced earnings in the long run. This dual effect is difficult to capture in a standard linear regression, we may include a quadratic term or sleep or a dummy variable for greater or less than 8 hours of sleep to effectively capture this in our regression. We are interested in exploring this relationship further in our regression analysis.
+
+**Tobacco and drug usage**
+
+Our next predictor of weekly earnings is tobacco and drug usage. We anticipate a negative relationship between weekly earnings and tobacco and drug usage. 
+
+```{r}
+vice_explore = ggplot(atus.all.final, aes(x=tobaccodrug_hr, y=weekly_earn)) +
+  geom_point(aes(colour=sex)) +
+  geom_smooth(se=F, color="red", size=1)
+vice_explore
+```
+
+We can see from the regression line that our hypothesis for a negative relationship is also shown in the data. We can also see that the majority of respondents report zero tobacco and drug usage at all, due to this we may include a dummy variable for tobacco and drug usage above 0.
+
+The graph below shows the relationship with values for 0 removed and the log transformation of weekly earnings taken. 
+
+```{r}
+atus.all.final %>% # Excluding values = 0 and log transformation
+  filter(tobaccodrug_hr != 0) %>%
+  mutate(log_weekly_earn = log(weekly_earn)) %>%
+  ggplot(aes(x=tobaccodrug_hr, y=log_weekly_earn)) +
+  geom_point(aes(colour=sex)) +
+  geom_smooth(method="lm", se=F, color="red", size=1)
+```
+
+It is also interesting to note that only three women appear above the regression line. It would appear that for any level of income women are less likely to use drugs and tobacco than men. This motivates our usage for sex as a control variable in our regression. There may even be cause to include an interaction between sex and tobacco and drug usage. 
+
+**TV and movies** 
+
+```{r}
+hist(atus.all.final$tvmovies_hr)
+```
+
+The histogram of time spent watching TV and movies shows a distribution with extreme positive skew, the log transformation will be taken to ensure we can make statistical inferences using the data. Because our all data is time based we expect this to occur with most, if not all, control variables. This changes the interpretation of our regression coefficients, which will addressed during the next stage of the report.  
+
+```{r}
+atus.all.final %>% # log transformations of both variables
+  filter(tvmovies_hr != 0) %>%
+  mutate(log_weekly_earn = log(weekly_earn)) %>%
+  ggplot(aes(x=log(tvmovies_hr+1), y=log_weekly_earn)) +
+  geom_point(aes(colour=sex)) +
+  geom_smooth(method="lm", se=F, color="red", size=1)
+```
+
+The scatterplot shows a small negative relationship among the data, this relationship is likely not statistically significant. It will be interesting to see if this relationship holds following the introduction of control variables in our regression. 
+
+**Personal reading**
+
+```{r}
+readingpersonal_explore = ggplot(atus.all, aes(x=readingpersonal_hr, y=weekly_earn)) +
+  geom_point(aes(colour=sex)) +
+  geom_smooth(method="lm", se=F, color="red", size=1)
+readingpersonal_explore
+```
+
+There appears to be a significant positive relationship between time spend reading and weekly income. Again, because of the skew we decided to take the log of time spent reading. 
+
+```{r}
+atus.all.final %>% # log transformations of both variables
+  mutate(log_weekly_earn = log(weekly_earn)) %>%
+  mutate(log_readingpersonal_hr = log(readingpersonal_hr+1)) %>%
+  ggplot(aes(x=log_readingpersonal_hr, y=log_weekly_earn)) +
+  geom_point(aes(colour=sex)) +
+  geom_smooth(method="lm", se=F, color="red", size=1)
+```
+
+After the log is included the relationship remains positive but to a lesser degree. 
+
+**Music listening (non-radio)**
+
+```{r}
+atus.all.final %>% # Excluding values = 0 and log transformation
+  filter(music_nonradio_hr != 0) %>%
+  mutate(log_weekly_earn = log(weekly_earn)) %>%
+  ggplot(aes(x=music_nonradio_hr, y=log_weekly_earn)) +
+  geom_point(aes(colour=sex)) +
+  geom_smooth(method="lm", se=F, color="red", size=1)
+```
+
+Time spent listening to music (non-radio) seems to have a small negative relationship. We are curious if this relationship remains negative and if it is significant when we include our control variables. 
+
+**Gambling**
+```{r}
+gambling_explore = ggplot(atus.all, aes(x=gambling_hr, y=weekly_earn)) +
+  geom_point(aes(colour=sex)) +
+  geom_smooth(method="lm", se=F, color="red", size=1)
+gambling_explore
+```
+
+Although gambling would be an interesting variable to study appears that respondents simply do not spend enough time gambling for the variable to add anything to our regression. For that reason, we won't be constructing a regression model using our gambling variable. 
+
+**Socializing with others**
+```{r}
+atus.all.final %>% 
+  filter(socializing_others_hr != 0) %>%
+  ggplot(aes(x=log(socializing_others_hr+1), y=log(weekly_earn))) +
+  geom_point(aes(colour=sex)) +
+  geom_smooth(method="lm", se=F, color="red", size=1)
+```
+
+Time spent socializing does not appear to be correlated with earnings, this may be because it is such a common activity for people of all income levels, however; relationships may begin to emerge when we include controls and interaction effects in our regression model. 
+
+\newpage
+
+## Regression Modeling and Analysis
+
+In this section of the report, we detail our approach to create the regressions modeling the relationships between our variables of interest and weekly earnings. We first created full "kitchen sink" models and then used the stepAIC function to optimize for only the most important variables. 
+
+**Adjusted Data Wrangling**
+
+As a result of our exploratory analysis, we have to make a few adjustments to our initial data wrangling procedure. In short, this involves performing log transformations on our variables of interest and response variable. Additionally, we also need to construct dummy variables for our categorical controls. The code chunks below perform this adjustment:
+
+```{r}
+# Log transformation
+atus.all.logtransform = atus.all.final %>%
+  mutate(
+    log_sleep_hr = log(dur.10101 + 1 / 60),
+    log_tobaccodrug_hr = log(dur.120302 + 1 / 60),
+    log_tvmovies_hr = log(dur.120303 + 1 / 60),
+    log_readingpersonal_hr = log(dur.120312 + 1 / 60),
+    log_music_nonradio_hr = log(dur.120306 + 1 / 60),
+    log_socializing_others_hr = log(dur.120101 + 1 / 60),
+    log_gambling_hr = log(dur.120404 + 1 / 60),
+    log_work_hrs_week = log(work_hrs_week + 1),
+    hh_size_log = log(1 + hh_size), 
+    log_weekly_earn = log(weekly_earn + 1)
+  ) 
+```
+
+```{r, echo=TRUE, results='hide'}
+# Construction of dummy variables for categorical controls using as.factor()
+atus.all.logtransform$occup_code.f = as.factor(atus.all.logtransform$occup_code)
+atus.all.logtransform$ind_code.f = as.factor(atus.all.logtransform$ind_code)
+atus.all.logtransform$work_class.f = as.factor(atus.all.logtransform$work_class)
+atus.all.logtransform$state.f = as.factor(atus.all.logtransform$state)
+atus.all.logtransform$sex.f = as.factor(atus.all.logtransform$sex)
+atus.all.logtransform$edu.f = as.factor(atus.all.logtransform$edu)
+atus.all.logtransform$race.f = as.factor(atus.all.logtransform$race)
+atus.all.logtransform$hispanic.f = as.factor(atus.all.logtransform$hispanic)
+atus.all.logtransform$country_born.f = as.factor(atus.all.logtransform$country_born)
+atus.all.logtransform$citizen.f = as.factor(atus.all.logtransform$citizen)
+atus.all.logtransform$marital.f = as.factor(atus.all.logtransform$marital)
+```
+
+**Construction of Initial Full Models**
+
+The first step was the construction of "full models", models that included all of the available control variables as well as the respective variable of interest. 
+
+$$ log(weeklyearn) = \beta_0 + \sum_{i=1}^{k}\beta_k(controlvariableK_i) + \epsilon $$
+
+```{r}
+# Time spent sleeping
+mod_sleep = lm(log_weekly_earn ~ log_sleep_hr + occup_code.f + ind_code.f + 
+                 work_class.f + state.f + sex.f + edu.f + race.f + 
+                 hispanic.f + country_born.f + citizen.f + marital.f + 
+                 log_work_hrs_week + hh_size_log, data = atus.all.logtransform)
+
+# Use of tobacco and drugs
+mod_tobaccodrug = lm(log_weekly_earn ~ log_tobaccodrug_hr + occup_code.f + 
+                       ind_code.f + work_class.f + state.f + sex.f + edu.f + 
+                       race.f + hispanic.f + country_born.f + citizen.f + 
+                       marital.f + log_work_hrs_week + hh_size_log, 
+                     data = atus.all.logtransform)
+
+# Watching TV and movies
+mod_tvmovies = lm(log_weekly_earn ~ log_tvmovies_hr + occup_code.f + ind_code.f + 
+                    work_class.f + state.f + sex.f + edu.f + race.f + 
+                    hispanic.f + country_born.f + citizen.f + marital.f + 
+                    log_work_hrs_week + hh_size_log,
+                  data=atus.all.logtransform)
+
+# Reading for personal pleasure
+mod_readingpersonal = lm(log_weekly_earn ~ log_readingpersonal_hr + occup_code.f + 
+                           ind_code.f + work_class.f + state.f + 
+                           sex.f + edu.f + race.f + hispanic.f + 
+                           country_born.f + citizen.f + marital.f + 
+                           log_work_hrs_week + hh_size_log,
+                         data=atus.all.logtransform)
+
+# Listening to music (non-radio)
+mod_music_nonradio = lm(log_weekly_earn ~ log_music_nonradio_hr + occup_code.f + 
+                          ind_code.f + work_class.f + state.f + 
+                          sex.f + edu.f + race.f + hispanic.f + country_born.f + 
+                          citizen.f + marital.f + log_work_hrs_week + hh_size_log,
+                        data=atus.all.logtransform)
+
+# Socializing with others
+mod_socializing = lm(log_weekly_earn ~ log_socializing_others_hr + occup_code.f + 
+                       ind_code.f + work_class.f + state.f + sex.f + 
+                       edu.f + race.f + hispanic.f + country_born.f + 
+                       citizen.f + marital.f + log_work_hrs_week + hh_size_log,
+                     data=atus.all.logtransform)
+```
+*Note that the regression for gambling is not included due to a previously identified lack of data. 
+
+An example of the result of one of these models is provided below using the model for hours spent sleeping.
+
+```{r}
+summary(mod_sleep)
+```
+
+You'll notice that there are many, many control variables. For example, we control for possible variance in weekly earnings by state, which produced a dummy variable for 49 states with the "base state" being Alabama. The high significance level on many of these controls speaks to the importance of including them in our analysis. 
+
+**Optimizing our Regression Models**
+
+In our next step, we "trim" the model using a stepAIC procedure to produce the final versions of our models for analysis. In this step, the optimization sometimes removed our variable of interest. In that case, we manually re-inserted the variable in the final construction of the respective model. The code chunk below shows this process. 
+
+```{r, echo=TRUE, results="hide"}
+library(MASS)
+
+### Sleep
+final_sleep = stepAIC(mod_sleep, direction="both")
+final_sleep$anova
+
+# Manual re-entry of log_sleep_hr after stepAIC
+final_sleep_mod = lm(log_weekly_earn ~ log_sleep_hr + occup_code.f + ind_code.f + 
+                       work_class.f + state.f + sex.f + edu.f + race.f + 
+                       hispanic.f + + citizen.f + marital.f + 
+                       log_work_hrs_week + hh_size_log, 
+                     data = atus.all.logtransform)
+### Tobacco and Drugs
+final_tobaccodrug = stepAIC(mod_tobaccodrug, direction="both")
+final_tobaccodrug$anova
+
+### TV Movies
+final_tvmovies = stepAIC(mod_tvmovies, direction="both")
+final_tvmovies$anova
+
+# Manual re-entry of log_tvmovies_hr after stepAIC
+final_tvmovies_mod = lm(log_weekly_earn ~ log_tvmovies_hr + occup_code.f + ind_code.f + 
+                          work_class.f + state.f + sex.f + edu.f + race.f + 
+                          hispanic.f + + citizen.f + marital.f + 
+                          log_work_hrs_week + hh_size_log,
+                        data=atus.all.logtransform)
+
+### Reading for Personal reasons
+final_readingpersonal = stepAIC(mod_readingpersonal, direction="both")
+final_readingpersonal$anova
+
+# Manual re-entry...
+final_readingpersonal_mod = lm(log_weekly_earn ~ log_readingpersonal_hr + occup_code.f + 
+                                 ind_code.f + work_class.f + state.f + 
+                                 sex.f + edu.f + race.f + hispanic.f + 
+                                 country_born.f + citizen.f + marital.f + 
+                                 log_work_hrs_week + hh_size_log,
+                               data=atus.all.logtransform)
+
+### Music (non-radio)
+final_music_nonradio = stepAIC(mod_music_nonradio, direction="both")
+final_music_nonradio$anova
+
+# Manual re-entry...
+final_music_nonradio_mod = lm(formula = log_weekly_earn ~ log_music_nonradio_hr + 
+                                 occup_code.f + ind_code.f + state.f + sex.f + 
+                                 edu.f + race.f + hispanic.f + citizen.f + 
+                                 marital.f + log_work_hrs_week + hh_size_log, 
+                               data = atus.all.logtransform)
+
+### Socializing
+final_socializing = stepAIC(mod_socializing, direction="both")
+final_socializing$anova
+
+# Manual re-entry
+final_socializing_mod = lm(log_weekly_earn ~ log_socializing_others_hr + occup_code.f + 
+                             ind_code.f + work_class.f + state.f + 
+                             sex.f + edu.f + race.f + hispanic.f + 
+                             citizen.f + marital.f + 
+                             log_work_hrs_week + hh_size_log,
+                           data=atus.all.logtransform)
+```
+
+**Results and Analysis**
+
+The results of these models are summarized below. For a full reporting of the results, see the appendix of our report which includes full model summary tables. 
+
+| **Variable of Interest** | **Coefficient** | **Standard Error** | **T-stat** | **P-value** | **Significance Level** |
+|--------------------------|-----------------|--------------------|------------|-------------|------------------------|
+| Sleep                    | 0.002939        | 0.022209           | 0.132      | 0.68947     | None                   |
+| Tobacco and Drugs        | -0.026047       | 0.01092            | -2.385     | 0.017151    | *                      |
+| TV and Movies            | 0.003147        | 0.00257            | 1.225      | 0.22        | None                   |
+| Personal Reading         | 0.004008        | 0.003681           | 1.089      | 0.276362    | None                   |
+| Music (non-radio)        | 0.003199        | 0.009304           | 0.344      | 0.73098     | None                   |
+| Socializing              | 0.00185         | 0.002482           | 0.747      | 0.454954    | None                   |
+
+We want to quickly comment that in our regressions, we confirmed a number of hypotheses about the effect of certain control variables. For example, if you look at the regression table for our analysis of Sleep, you can see that if a respondent was coded as "Black", their weekly earnings were significantly more negative than that of our base respondent. Relatedly, individuals with higher levels of educational attainment (as measured by a dummy variable for highest level of education) were associated with significantly higher weekly earnings. For this reason, despite the large amount of included controls, we don't think that our model is overfitted. The control variables were included deliberately due to their known effects on incomes, and the majority remained after model optimization. 
+
+Our analysis was done to see if there were significant relationships between certain non-work related activities and an individual's level of weekly earnings, controlling for a number of important variables (as discussed above). 
+
+Of our variables of interest, only one was determined to have a significant effect on weekly earnings: time spent using tobacco and drugs. For this variable, our regression analysis determined that increasing time spent using tobacco and other drugs by 1% is associated with a 0.026% *decrease* in weekly earnings. For the remainder of our variables, there was no significant relationship. 
+
+So, as the saying goes, "don't do drugs, kids". 
+
+\newpage
+
+## Appendix
+
+**Model Summary Tables**
+```{r}
+summary(final_sleep_mod)
+summary(final_tobaccodrug)
+summary(final_tvmovies_mod)
+summary(final_readingpersonal_mod)
+summary(final_music_nonradio_mod)
+summary(final_socializing_mod)
+```
+
