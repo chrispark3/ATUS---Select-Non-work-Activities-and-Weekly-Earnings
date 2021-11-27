@@ -9,14 +9,14 @@ Packages such as tidyverse and atus for exploring the ATUS data, data wrangling,
 The steps that were taken in this analysis involved:
 
 1. Data Wrangling:
-- To do this analysis, we will first have to construct a new data table that contains observations of a specific survey respondent ID, their weekly earnings, and all of the activity codes related to our definition of non-work activity. This will require use of the dplyr package to merge and filter the “atusact” and “atusresp” datasets. In this step, we will also simplify our data to only include those who are in the workforce (not a student or unemployed), are full-time workers, and only have one job.
+- To do this analysis, we first have to construct a new data table that contains observations of a specific survey respondent ID, their weekly earnings, and all of the activity codes related to our definition of non-work activity. This required the use of the dplyr package to merge and filter the “atusact” and “atusresp” datasets. In this step, we also simplified our data to only include those who are in the workforce (not a student or unemployed), are full-time workers, and only have one job.
 
 2. Exploratory
-- In this step, we will take our usable dataset and use ggplot2 to create “quick-and-dirty” visualizations to explore which variables may be the most pertinent to our analysis, how these variables are distributed and if we need to make adjustments, and other possible learnings.
+- In this step, we took our usable dataset and use ggplot2 to create “quick-and-dirty” visualizations to explore which variables may be the most pertinent to our analysis, how these variables are distributed and if we need to make adjustments, and other possible learnings.
 
 3. Regression Analysis
-- Once we have a usable dataset containing our variables of interest, we will perform a number of regression analyses to explore the relationships between the time spent doing different types of non-work activities and weekly earnings for our survey respondents. For example, reprising the “watching TV” example from before, a regression line may look like the one below:
+- Once we had a usable dataset containing our variables of interest, we performed a number of regression analyses to explore the relationships between the time spent doing different types of non-work activities and weekly earnings for our survey respondents. For example, reprising the “watching TV” example from before, a regression line may look like the one below:
 weeklyearningsi = β0 + β1(watchingTVi) + βk(controlvariablesi) + εi
-- There are a number of variables that will need to be included in our controls including marital status, work-class (public sector, private sector, or self-employed), race, and education level in order to ensure that our regressions are valid.
+- There are a number of variables that needed to be included in our controls including marital status, work-class (public sector, private sector, or self-employed), race, and education level in order to ensure that our regressions are valid.
 
 #### The full analysis can be found in _ATUS Script.pdf_ and its respective R code in _ATUS Script.Rmd_
